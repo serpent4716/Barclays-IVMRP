@@ -1,0 +1,44 @@
+{
+"routing": {
+"java-library": "backend-dev-team",
+"web-app": "backend-dev-team",
+"frontend-lib": "frontend-team",
+"web-server": "infra-ops-team",
+"os": "infra-ops-team",
+"file-transfer": "infra-ops-team",
+"network": "network-team",
+"database": "dba-team",
+"container": "platform-team",
+"cloud": "cloud-ops-team",
+"identity": "iam-ops-team"
+},
+"description": {
+"backend-dev-team": "Application developers: libraries, frameworks, API logic",
+"frontend-team": "UI developers: JavaScript/npm dependencies, XSS",
+"infra-ops-team": "Servers, OS patching, web servers",
+"network-team": "Load balancers, firewalls, network devices",
+"dba-team": "Databases",
+"platform-team": "Kubernetes and containers",
+"cloud-ops-team": "Cloud configuration (CSPM)",
+"iam-ops-team": "Identity, directory, MFA",
+"security-triage-team": "Fallback for unrouted findings"
+},
+"urgency": {
+"EMERGENCY": {
+"sla_days": 2,
+"label": "Fix immediately (within 48 hours)"
+},
+"HIGH": {
+"sla_days": 7,
+"label": "Fix this week"
+},
+"MEDIUM": {
+"sla_days": 30,
+"label": "Fix this month"
+},
+"LOW": {
+"sla_days": 90,
+"label": "Can wait: backlog"
+}
+}
+}

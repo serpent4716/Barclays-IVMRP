@@ -1,0 +1,219 @@
+{
+"A": {
+"name": "Network Scanner",
+"type": "Vulnerability Scanner",
+"map": {
+"cve_id": "cve",
+"host": "host",
+"first_seen": "first_seen"
+},
+"records": [
+{
+"host": "10.10.1.15",
+"cve": "CVE-2021-44228",
+"first_seen": "2026-11-09"
+},
+{
+"host": "10.10.1.10",
+"cve": "CVE-2021-41773",
+"first_seen": "2026-10-28"
+},
+{
+"host": "10.10.9.17",
+"cve": "CVE-2024-3094",
+"first_seen": "2026-11-01"
+},
+{
+"host": "10.10.0.5",
+"cve": "CVE-2023-4966",
+"first_seen": "2026-11-10"
+},
+{
+"host": "10.10.2.20",
+"cve": "CVE-2022-0847",
+"first_seen": "2026-10-12"
+},
+{
+"host": "10.10.11.11",
+"cve": "CVE-2020-1472",
+"first_seen": "2026-11-02"
+}
+]
+},
+"B": {
+"name": "Agent Scanner",
+"type": "Vulnerability Scanner",
+"map": {
+"cve_id": "finding",
+"host": "asset",
+"cvss": "risk",
+"first_seen": "first_seen"
+},
+"records": [
+{
+"finding": "CVE-2021-44228",
+"asset": "payment-api-prod",
+"risk": 10.0,
+"first_seen": "2026-11-10"
+},
+{
+"finding": "CVE-2022-22965",
+"asset": "payment-api-prod",
+"risk": 9.8,
+"first_seen": "2026-11-03"
+},
+{
+"finding": "CVE-2021-41773",
+"asset": "server-prod-01",
+"risk": 7.5,
+"first_seen": "2026-10-30"
+},
+{
+"finding": "CVE-2022-0847",
+"asset": "core-db-prod",
+"risk": 7.8,
+"first_seen": "2026-10-14"
+},
+{
+"finding": "CVE-2023-44487",
+"asset": "api-gateway",
+"risk": 7.5,
+"first_seen": "2026-11-04"
+}
+]
+},
+"C": {
+"name": "Legacy Scanner",
+"type": "Vulnerability Scanner",
+"map": {
+"cve_id": "vulnerability_id",
+"host": "hostname",
+"cvss": "cvss"
+},
+"records": [
+{
+"vulnerability_id": "CVE-2022-22965",
+"hostname": "payment-server",
+"cvss": 9.8
+},
+{
+"vulnerability_id": "CVE-2023-34362",
+"hostname": "reporting-server",
+"cvss": 9.8,
+"first_seen": "2026-10-30"
+},
+{
+"vulnerability_id": "CVE-2023-4966",
+"hostname": "lb-prod",
+"cvss": 9.4
+},
+{
+"vulnerability_id": "CVE-2023-4966",
+"hostname": "unknown-host-99",
+"cvss": 9.4
+}
+]
+},
+"D": {
+"name": "Cloud CSPM",
+"type": "Cloud Security Posture",
+"map": {
+"cve_id": "check_id",
+"host": "resource",
+"cvss": "score",
+"first_seen": "detected"
+},
+"records": [
+{
+"check_id": "CSPM-0001",
+"resource": "s3-customer-docs",
+"score": 7.5,
+"detected": "2026-11-06"
+}
+]
+},
+"E": {
+"name": "Container Scanner",
+"type": "Container / Kubernetes",
+"map": {
+"cve_id": "vuln",
+"host": "cluster",
+"first_seen": "seen"
+},
+"records": [
+{
+"vuln": "K8S-0001",
+"cluster": "k8s-cluster-a",
+"seen": "2026-11-07"
+},
+{
+"vuln": "CVE-2022-3786",
+"cluster": "k8s-cluster-a",
+"seen": "2026-11-07"
+}
+]
+},
+"F": {
+"name": "Penetration Test",
+"type": "Pen Test Report",
+"map": {
+"cve_id": "issue_id",
+"host": "target",
+"first_seen": "reported"
+},
+"records": [
+{
+"issue_id": "PENTEST-0001",
+"target": "payment-api-prod",
+"reported": "2026-11-10"
+},
+{
+"issue_id": "PENTEST-0002",
+"target": "customer-portal-ui",
+"reported": "2026-11-09"
+}
+]
+},
+"G": {
+"name": "Dependency Scan (SCA)",
+"type": "Software Composition",
+"map": {
+"cve_id": "advisory",
+"host": "app",
+"first_seen": "found"
+},
+"records": [
+{
+"advisory": "CVE-2021-23337",
+"app": "customer-portal-ui",
+"found": "2026-11-05"
+},
+{
+"advisory": "CVE-2021-3749",
+"app": "customer-portal-ui",
+"found": "2026-11-05"
+},
+{
+"advisory": "CVE-2022-31129",
+"app": "hr-portal",
+"found": "2026-11-08"
+}
+]
+},
+"H": {
+"name": "Identity Assessment",
+"type": "Identity Security",
+"map": {
+"cve_id": "issue",
+"host": "system",
+"first_seen": "date"
+},
+"records": [
+{
+"issue": "IAM-0001",
+"system": "iam-directory",
+"date": "2026-11-01"
+}
+]
+}
+}

@@ -1,0 +1,223 @@
+{
+"nvd": {
+"CVE-2021-44228": {
+"title": "Log4Shell: Apache Log4j2 remote code execution",
+"cvss_score": 10.0,
+"cwe": "CWE-917",
+"category": "java-library",
+"real": true
+},
+"CVE-2022-22965": {
+"title": "Spring4Shell: Spring Framework RCE via data binding",
+"cvss_score": 9.8,
+"cwe": "CWE-94",
+"category": "java-library",
+"real": true
+},
+"CVE-2021-41773": {
+"title": "Apache HTTP Server 2.4.49 path traversal",
+"cvss_score": 7.5,
+"cwe": "CWE-22",
+"category": "web-server",
+"real": true
+},
+"CVE-2023-4966": {
+"title": "Citrix Bleed: NetScaler sensitive information disclosure",
+"cvss_score": 9.4,
+"cwe": "CWE-119",
+"category": "network",
+"real": true
+},
+"CVE-2022-0847": {
+"title": "Dirty Pipe: Linux kernel privilege escalation",
+"cvss_score": 7.8,
+"cwe": "CWE-665",
+"category": "os",
+"real": true
+},
+"CVE-2020-1472": {
+"title": "Zerologon: Netlogon elevation of privilege",
+"cvss_score": 10.0,
+"cwe": "CWE-330",
+"category": "identity",
+"real": true
+},
+"CVE-2023-34362": {
+"title": "MOVEit Transfer SQL injection",
+"cvss_score": 9.8,
+"cwe": "CWE-89",
+"category": "file-transfer",
+"real": true
+},
+"CVE-2023-44487": {
+"title": "HTTP/2 Rapid Reset denial of service",
+"cvss_score": 7.5,
+"cwe": "CWE-400",
+"category": "web-server",
+"real": true
+},
+"CVE-2024-3094": {
+"title": "XZ Utils backdoor in liblzma",
+"cvss_score": 10.0,
+"cwe": "CWE-506",
+"category": "os",
+"real": true
+},
+"CVE-2022-3786": {
+"title": "OpenSSL X.509 punycode buffer overflow",
+"cvss_score": 7.5,
+"cwe": "CWE-120",
+"category": "container",
+"real": true
+},
+"CVE-2021-23337": {
+"title": "lodash command injection via template",
+"cvss_score": 7.2,
+"cwe": "CWE-77",
+"category": "frontend-lib",
+"real": true
+},
+"CVE-2021-3749": {
+"title": "axios regular expression DoS",
+"cvss_score": 7.5,
+"cwe": "CWE-1333",
+"category": "frontend-lib",
+"real": true
+},
+"CVE-2022-31129": {
+"title": "moment.js ReDoS in date parsing",
+"cvss_score": 7.5,
+"cwe": "CWE-400",
+"category": "frontend-lib",
+"real": true
+},
+"CSPM-0001": {
+"title": "Public cloud storage bucket holding customer documents",
+"cvss_score": 7.5,
+"cwe": "CWE-732",
+"category": "cloud",
+"real": false
+},
+"K8S-0001": {
+"title": "Privileged container allowed in production cluster",
+"cvss_score": 7.8,
+"cwe": "CWE-250",
+"category": "container",
+"real": false
+},
+"PENTEST-0001": {
+"title": "IDOR in payment API exposes other customers' records",
+"cvss_score": 8.1,
+"cwe": "CWE-639",
+"category": "web-app",
+"real": false
+},
+"PENTEST-0002": {
+"title": "Stored XSS in customer portal comments",
+"cvss_score": 6.1,
+"cwe": "CWE-79",
+"category": "frontend-lib",
+"real": false
+},
+"IAM-0001": {
+"title": "Privileged accounts without MFA",
+"cvss_score": 8.0,
+"cwe": "CWE-308",
+"category": "identity",
+"real": false
+}
+},
+"kev": {
+"CVE-2021-44228": {
+"known_ransomware_campaign_use": true
+},
+"CVE-2022-22965": {
+"known_ransomware_campaign_use": false
+},
+"CVE-2021-41773": {
+"known_ransomware_campaign_use": false
+},
+"CVE-2023-4966": {
+"known_ransomware_campaign_use": true
+},
+"CVE-2022-0847": {
+"known_ransomware_campaign_use": false
+},
+"CVE-2020-1472": {
+"known_ransomware_campaign_use": true
+},
+"CVE-2023-34362": {
+"known_ransomware_campaign_use": true
+},
+"CVE-2023-44487": {
+"known_ransomware_campaign_use": false
+}
+},
+"epss": {
+"CVE-2021-44228": 0.97,
+"CVE-2022-22965": 0.97,
+"CVE-2021-41773": 0.97,
+"CVE-2023-4966": 0.94,
+"CVE-2022-0847": 0.3,
+"CVE-2020-1472": 0.94,
+"CVE-2023-34362": 0.94,
+"CVE-2023-44487": 0.65,
+"CVE-2024-3094": 0.1,
+"CVE-2022-3786": 0.03,
+"CVE-2021-23337": 0.05,
+"CVE-2021-3749": 0.01,
+"CVE-2022-31129": 0.01
+},
+"relationships": [
+[
+"AST-0002",
+"AST-0003"
+],
+[
+"AST-0003",
+"AST-0001"
+],
+[
+"AST-0001",
+"AST-0004"
+],
+[
+"AST-0003",
+"AST-0007"
+],
+[
+"AST-0007",
+"AST-0004"
+],
+[
+"AST-0006",
+"AST-0008"
+],
+[
+"AST-0008",
+"AST-0004"
+],
+[
+"AST-0009",
+"AST-0012"
+],
+[
+"AST-0012",
+"AST-0001"
+],
+[
+"AST-0012",
+"AST-0011"
+]
+],
+"weights": {
+"cvss": 30,
+"kev": 20,
+"epss": 15,
+"internet": 10,
+"criticality": 10,
+"sensitive": 5,
+"regulatory": 3,
+"attack_path": 7
+}
+}
