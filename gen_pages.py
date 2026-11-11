@@ -9,6 +9,7 @@ DASH={'executive':('Executive / CISO','kpis,urgency,bu,top,paths,aistatus,ask'),
 'admin':('Platform Administrator','kpis,aistatus,pipe,sources,routing,assets,config,audit,tickets')}
 APIS=[('login','POST','/api/login','Any','{"username":"analyst","password":"analyst123"}','Authenticate, returns token'),
 ('pipeline_run','POST','/api/pipeline/run','admin, analyst','','Ingest 8 sources, normalize, dedup, score, route, create tasks'),
+('sources_upload','POST','/api/sources/upload','admin, analyst','[{"host":"10.10.1.15","cve_id":"CVE-2021-44228","first_seen":"2026-11-11"}]','Dynamic scan ingestion (JSON or CSV) without data loss'),
 ('sources','GET','/api/sources','any logged-in','','Finding sources and record counts'),
 ('teams','GET','/api/teams','any','','Routing rules + team workload'),
 ('assets_list','GET','/api/assets','any','','Asset inventory'),
