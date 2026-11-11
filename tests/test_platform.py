@@ -152,23 +152,48 @@ class TestIVMRPPlatform(unittest.TestCase):
         self.assertEqual(res.json['status'], 'ok')
         self.assertEqual(res.json['records_ingested'], 1)
 
-    def test_07_gemini_rules_fallback(self):
-        """Test natural language Q&A and explanation fallback when Gemini key is not set."""
-        # Status endpoint
+    def test_07_ollama_local_model_integration(self):
+        """Test Ollama local model detection and response generation when Gemini is unconfigured."""
         res = self.client.get('/api/ai/status', headers=self._auth_header('analyst'))
         self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json['ollama_configured'])
+        self.assertEqual(res.json['active_backend'], 'ollama')
+        self.assertIn('deepseek-coder', res.json['model'])
 
-        # Q&A fallback
-        res = self.client.post('/api/ask', json={'question': 'what must the frontend team fix?'}, headers=self._auth_header('analyst'))
+        # Ask question handled by Ollama
+        res = self.client.post('/api/ask', json={'question': 'what is log4shell?'}, headers=self._auth_header('analyst'))
         self.assertEqual(res.status_code, 200)
-        self.assertIn('frontend-team must fix', res.json['answer'])
+        self.assertEqual(res.json['source'], 'ollama')
+        self.assertIn('deepseek-coder', res.json['model'])
+        self.assertTrue(len(res.json['answer']) > 10)
 
-        # Executive summary fallback
-        res = self.client.post('/api/ai/executive-summary', headers=self._auth_header('executive'))
-        self.assertEqual(res.status_code, 200)
-        self.assertIn('findings across', res.json['answer'])
+    def test_08_rule_based_fallback_when_both_unavailable(self):
+        """Test graceful rule-based fallback when neither Gemini nor Ollama is available."""
+        old_host = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
+        try:
+            # Simulate Ollama offline
+            os.environ['OLLAMA_HOST'] = 'http://localhost:9999'
 
-    def test_08_api_smoke_test_all_endpoints(self):
+            # Status endpoint
+            res = self.client.get('/api/ai/status', headers=self._auth_header('analyst'))
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.json['active_backend'], 'rules')
+
+            # Q&A fallback
+            res = self.client.post('/api/ask', json={'question': 'what must the frontend team fix?'}, headers=self._auth_header('analyst'))
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.json['source'], 'rules')
+            self.assertIn('frontend-team must fix', res.json['answer'])
+
+            # Executive summary fallback
+            res = self.client.post('/api/ai/executive-summary', headers=self._auth_header('executive'))
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.json['source'], 'rules')
+            self.assertIn('findings across', res.json['answer'])
+        finally:
+            os.environ['OLLAMA_HOST'] = old_host
+
+    def test_09_api_smoke_test_all_endpoints(self):
         """Smoke test all remaining endpoints for 200 responses."""
         auth = self._auth_header('admin')
         self.assertEqual(self.client.get('/api/sources', headers=auth).status_code, 200)

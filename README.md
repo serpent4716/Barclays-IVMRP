@@ -4,6 +4,7 @@
 [![Framework](https://img.shields.io/badge/Framework-Flask%203.x-lightgrey.svg)](https://flask.palletsprojects.com/)
 [![Database](https://img.shields.io/badge/Database-SQLite%20(WAL)-blue.svg)](https://www.sqlite.org/)
 [![AI](https://img.shields.io/badge/AI-Google%20Gemini%20Flash-orange.svg)](https://aistudio.google.com/)
+[![Local AI](https://img.shields.io/badge/Local%20AI-Ollama-black.svg)](https://ollama.com/)
 [![Tests](https://img.shields.io/badge/Tests-Passing%20(100%25)-brightgreen.svg)](#testing)
 
 An enterprise vulnerability management and automated risk prioritization platform that aggregates disparate scanner feeds, calculates business-contextual risk scores (0–100), maps attack paths from internet-exposed perimeters to crown jewels, routes remediation tasks with SLA deadlines to appropriate teams, and provides natural-language AI insights.
@@ -32,7 +33,7 @@ An enterprise vulnerability management and automated risk prioritization platfor
   - 🛠️ **Asset Owner / Fix Team**: Filtered remediation queues by team, remediation advice, and exception requests.
   - 📋 **Auditor**: Full immutable audit trail, exception registry, and scoring configurations.
   - ⚙️ **Platform Admin**: System configuration, asset inventory, pipeline controls, and AI health checks.
-- **Explainable AI Layer (Google Gemini)**: Translates technical CVE data into plain-English root causes and step-by-step remediation guidance. Automatically falls back to deterministic rule-based explanations if an API key is not configured.
+- **Multi-Tier AI Layer (Gemini Cloud → Ollama Local → Rules Fallback)**: Translates technical CVE data into plain-English root causes and step-by-step remediation guidance. Checks for Google Gemini API first; if unavailable, automatically checks for local Ollama models (e.g. `deepseek-coder`); if neither is available, defaults seamlessly to deterministic rule-based explanations.
 
 ---
 
@@ -59,7 +60,7 @@ An enterprise vulnerability management and automated risk prioritization platfor
                         v
     [ REST API & RBAC ] <---> [ 6 Role Dashboards & Interactive API Pages ]
             ^
-            +---------------> [ Gemini AI / Rules Fallback Assistant ]
+            +---------------> [ Tiered AI: Gemini Cloud -> Ollama Local -> Rules Fallback ]
 ```
 
 ---
@@ -69,6 +70,7 @@ An enterprise vulnerability management and automated risk prioritization platfor
 ### 1. Prerequisites
 - Python 3.10+
 - `pip`
+- (Optional) [Ollama](https://ollama.com/) running locally for offline on-prem AI inference
 
 ### 2. Installation
 Clone the repository and install dependencies:
@@ -84,17 +86,25 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Configuration (Optional: Gemini AI)
+### 3. Configuration (Optional: Gemini AI or Ollama)
 Copy `.env.example` to `.env`:
 ```bash
 cp .env.example .env
 ```
-Edit `.env` and set your key:
+Edit `.env` to configure your preferred AI backend:
 ```ini
+# Option A: Cloud AI via Google Gemini
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
+
+# Option B: Local AI via Ollama (Zero Cloud Dependencies)
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=deepseek-coder:latest
 ```
-> **Note**: If `GEMINI_API_KEY` is omitted or left as default, the platform runs in **safe rule-based fallback mode** without breaking any features.
+> **Automatic Multi-Tier Fallback**:
+> 1. If `GEMINI_API_KEY` is set, the platform uses Gemini Flash.
+> 2. If Gemini is not set or fails, it automatically detects and uses Ollama with local models (e.g. `deepseek-coder:latest`).
+> 3. If neither is available, it defaults to the built-in deterministic rule engine. All features remain 100% functional in all three modes.
 
 ### 4. Run the Application
 ```bash

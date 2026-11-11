@@ -191,21 +191,87 @@ def stats():
                 average_risk_score=round(sum(f['risk_score'] for f in F) / max(len(F), 1), 1), assets=len(S['assets']), sources=len(S['src_counts']),
                 open_exceptions=sum(e['status'] == 'PENDING' for e in S['exceptions'].values()), by_urgency=ur, by_business_unit=bu, by_team=tm)
 
-# ---------------- Gemini AI layer (explains data; never changes scores) ----------------
+# ---------------- Multi-Tier AI Layer: Gemini API -> Ollama Local -> Rule-Based Fallback ----------------
 SYS = ("You are the AI assistant of a vulnerability management platform. Answer ONLY from the JSON data provided. Risk score, urgency and fix team were "
        "computed by the platform's deterministic engine: explain them, never recalculate or change them. If the data lacks the answer, say so. "
        "Be concise (max 150 words) and do not invent CVE facts.")
 
 def gemini(prompt):
     k = gkey()
-    if not k: return None, 'GEMINI_API_KEY not set (using built-in rules)'
+    if not k: return None, 'GEMINI_API_KEY not set'
     url = f'https://generativelanguage.googleapis.com/v1beta/models/{gmodel()}:generateContent'
     body = json.dumps({'system_instruction': {'parts': [{'text': SYS}]}, 'contents': [{'role': 'user', 'parts': [{'text': prompt}]}], 'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 2048}}).encode()
     try:
         with urllib.request.urlopen(urllib.request.Request(url, body, {'Content-Type': 'application/json', 'x-goog-api-key': k}), timeout=int(os.environ.get('GEMINI_TIMEOUT', '20'))) as r:
             return json.load(r)['candidates'][0]['content']['parts'][0]['text'].strip(), None
     except Exception as e:
-        return None, f'Gemini call failed ({type(e).__name__}); using built-in rules'
+        return None, f'Gemini call failed ({type(e).__name__})'
+
+def ollama_host():
+    return os.environ.get('OLLAMA_HOST', 'http://localhost:11434').rstrip('/')
+
+def ollama_available():
+    try:
+        req = urllib.request.Request(f'{ollama_host()}/api/tags')
+        with urllib.request.urlopen(req, timeout=2) as r:
+            data = json.load(r)
+            models = [m['name'] for m in data.get('models', [])]
+            target = os.environ.get('OLLAMA_MODEL', '').strip()
+            if target:
+                for m in models:
+                    if m == target or m.startswith(target):
+                        return True, m
+            if models:
+                return True, models[0]
+            return False, 'no models found'
+    except Exception as e:
+        return False, str(e)
+
+def ollama(prompt):
+    ok, model_or_err = ollama_available()
+    if not ok:
+        return None, f'Ollama not available ({model_or_err})', None
+    url = f'{ollama_host()}/api/generate'
+    payload = {
+        'model': model_or_err,
+        'system': SYS,
+        'prompt': prompt,
+        'stream': False,
+        'options': {'temperature': 0.2, 'num_predict': 512}
+    }
+    timeout = int(os.environ.get('OLLAMA_TIMEOUT', '30'))
+    try:
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(url, data=body, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            res = json.load(r)
+            ans = res.get('response', '').strip()
+            if ans:
+                return ans, None, model_or_err
+            return None, 'Ollama returned empty response', model_or_err
+    except Exception as e:
+        return None, f'Ollama call failed ({type(e).__name__})', model_or_err
+
+def query_ai(prompt):
+    """Tiered AI check: (1) Gemini API -> (2) Ollama Local Models -> (3) Rule-based fallback."""
+    notes = []
+    # 1. Try Gemini
+    if gkey():
+        ans, err = gemini(prompt)
+        if ans: return ans, 'gemini', gmodel(), None
+        if err: notes.append(err)
+    else:
+        notes.append('Gemini key not configured')
+
+    # 2. Try Ollama local
+    ans, err, o_model = ollama(prompt)
+    if ans:
+        return ans, 'ollama', o_model, '; '.join(notes) if notes else None
+    if err:
+        notes.append(err)
+
+    # 3. Rule fallback
+    return None, 'rules', 'rule-engine', '; '.join(notes)
 
 def ctx(extra=None):
     F = sorted(S['findings'].values(), key=lambda f: -f['risk_score'])[:15]
@@ -218,53 +284,79 @@ def why(f):
 @app.get('/api/ai/status')
 @need()
 def ai_status():
-    return jsonify(gemini_configured=bool(gkey()), model=gmodel(), mode='gemini' if gkey() else 'rules')
+    g_ok = bool(gkey())
+    o_ok, o_model = ollama_available()
+    active = 'gemini' if g_ok else ('ollama' if o_ok else 'rules')
+    active_model = gmodel() if active == 'gemini' else (o_model if active == 'ollama' else 'rule-engine')
+    return jsonify(
+        gemini_configured=g_ok,
+        gemini_model=gmodel(),
+        ollama_configured=o_ok,
+        ollama_model=o_model if o_ok else None,
+        ollama_host=ollama_host(),
+        active_backend=active,
+        model=active_model,
+        mode=active
+    )
 
 @app.post('/api/ask')
 @need()
 def ask():
-    q = ((request.json or {}).get('question') or '').lower()
+    q = ((request.json or {}).get('question') or '').strip()
     F = sorted(S['findings'].values(), key=lambda f: -f['risk_score'])
-    sel = next((f for f in F if f['finding_id'].lower() in q), None)
-    a, note = gemini(f"DATA: {ctx(sel)}\n\nQUESTION: {q}")
-    if a: return jsonify(answer=a, source='gemini')
-    ans = None
-    if sel: ans = why(sel)
-    elif 'overdue' in q:
+    sel = next((f for f in F if f['finding_id'].lower() in q.lower()), None)
+    ans, source, model, note = query_ai(f"DATA: {ctx(sel)}\n\nQUESTION: {q}")
+    if ans:
+        return jsonify(answer=ans, source=source, model=model, note=note)
+
+    r_ans = None
+    q_low = q.lower()
+    if sel:
+        r_ans = why(sel)
+    elif 'overdue' in q_low:
         o = [t for t in S['tasks'].values() if overdue(t)]
-        ans = f'{len(o)} overdue: ' + ', '.join(f"{t['task_id']} ({t['fix_team']})" for t in o)
-    elif 'internet' in q:
-        ans = 'Internet-facing: ' + ', '.join(f"{f['finding_id']} {f['asset_name']} ({f['risk_score']})" for f in F if S['assets'][f['asset_id']]['internet_exposed'])
-    elif 'path' in q:
-        ans = 'Attack paths: ' + '; '.join(' > '.join(S['assets'][x]['name'] for x in p) for p in S['paths'])
+        r_ans = f'{len(o)} overdue: ' + ', '.join(f"{t['task_id']} ({t['fix_team']})" for t in o)
+    elif 'internet' in q_low:
+        r_ans = 'Internet-facing: ' + ', '.join(f"{f['finding_id']} {f['asset_name']} ({f['risk_score']})" for f in F if S['assets'][f['asset_id']]['internet_exposed'])
+    elif 'path' in q_low:
+        r_ans = 'Attack paths: ' + '; '.join(' > '.join(S['assets'][x]['name'] for x in p) for p in S['paths'])
     else:
         for tm in S['teams']['description']:
-            if tm in q or tm.split('-')[0] in q:
-                ans = f'{tm} must fix: ' + ', '.join(f"{f['finding_id']} {f['cve_id']} [{f['urgency']}]" for f in F if f['fix_team'] == tm)
+            if tm in q_low or tm.split('-')[0] in q_low:
+                r_ans = f'{tm} must fix: ' + ', '.join(f"{f['finding_id']} {f['cve_id']} [{f['urgency']}]" for f in F if f['fix_team'] == tm)
                 break
-    if not ans and any(w in q for w in ('top', 'highest', 'priorit', 'first', 'emergency', 'urgent')):
-        ans = 'Top priority -> ' + why(F[0])
-    if not ans:
+    if not r_ans and any(w in q_low for w in ('top', 'highest', 'priorit', 'first', 'emergency', 'urgent')):
+        r_ans = 'Top priority -> ' + why(F[0])
+    if not r_ans:
         for bu in {x['business_unit'] for x in F}:
-            if bu.lower() in q:
-                ans = f'{bu}: ' + ', '.join(f"{f['finding_id']}={f['risk_score']}" for f in F if f['business_unit'] == bu)
+            if bu.lower() in q_low:
+                r_ans = f'{bu}: ' + ', '.join(f"{f['finding_id']}={f['risk_score']}" for f in F if f['business_unit'] == bu)
                 break
-    return jsonify(answer=ans or "Try: 'top risk', 'why is FND-000001 urgent', 'overdue', 'internet facing', 'attack paths', 'what must frontend team fix', 'Finance risk'.", source='rules', note=note)
+    return jsonify(
+        answer=r_ans or "Try: 'top risk', 'why is FND-000001 urgent', 'overdue', 'internet facing', 'attack paths', 'what must frontend team fix', 'Finance risk'.",
+        source='rules',
+        model='rule-engine',
+        note=note
+    )
 
 @app.post('/api/findings/<fid>/explain')
 @need()
 def explain(fid):
     f = S['findings'].get(fid)
     if not f: return jsonify(error='not found'), 404
-    a, note = gemini(f"DATA: {ctx(f)}\n\nFor the selected finding give: (1) why it has this urgency, (2) 3 concrete remediation steps for {f['fix_team']}, (3) whether it can wait and why.")
-    return jsonify(answer=a or why(f) + ' Recommended: apply the vendor patch/fix, verify, then close the task.', source='gemini' if a else 'rules', note=note)
+    ans, source, model, note = query_ai(f"DATA: {ctx(f)}\n\nFor the selected finding give: (1) why it has urgency {f['urgency']}, (2) 3 concrete remediation steps for {f['fix_team']}, (3) whether it can wait and why.")
+    if ans:
+        return jsonify(answer=ans, source=source, model=model, note=note)
+    return jsonify(answer=why(f) + ' Recommended: apply the vendor patch/fix, verify, then close the task.', source='rules', model='rule-engine', note=note)
 
 @app.post('/api/ai/executive-summary')
 @need()
 def exec_summary():
-    a, note = gemini(f"DATA: {ctx()}\n\nWrite a 5-sentence board-style executive summary: overall posture, what is most urgent, which teams are loaded, SLA status, one recommended action.")
+    ans, source, model, note = query_ai(f"DATA: {ctx()}\n\nWrite a 5-sentence board-style executive summary: overall posture, what is most urgent, which teams are loaded, SLA status, one recommended action.")
+    if ans:
+        return jsonify(answer=ans, source=source, model=model, note=note)
     s = stats()
-    return jsonify(answer=a or f"{s['total_findings']} findings across {s['assets']} assets from {s['sources']} sources; {s['emergency_findings']} need emergency action; {s['overdue_findings']} overdue; SLA compliance {s['sla_compliance']}%.", source='gemini' if a else 'rules', note=note)
+    return jsonify(answer=f"{s['total_findings']} findings across {s['assets']} assets from {s['sources']} sources; {s['emergency_findings']} need emergency action; {s['overdue_findings']} overdue; SLA compliance {s['sla_compliance']}%.", source='rules', model='rule-engine', note=note)
 
 # ---------------- REST API ----------------
 @app.post('/api/login')
