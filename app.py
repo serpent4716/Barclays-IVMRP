@@ -223,7 +223,9 @@ def stats():
             w['open'] += 1
             w['emergency'] += t['urgency'] == 'EMERGENCY'
         w['overdue'] += overdue(t)
-    return dict(total_findings=len(F), emergency_findings=ur.get('EMERGENCY', 0), critical_findings=sum(f['risk_level'] == 'CRITICAL' for f in F), overdue_findings=len(od_),
+    open_emerg = sum(t['urgency'] == 'EMERGENCY' and t['status'] != 'CLOSED' for t in T)
+    return dict(total_findings=len(F), emergency_findings=ur.get('EMERGENCY', 0), open_emergency_tasks=open_emerg,
+                critical_findings=sum(f['risk_level'] == 'CRITICAL' for f in F), overdue_findings=len(od_),
                 sla_compliance=round(100 * (1 - len(od_) / max(len(T), 1)), 1),
                 average_mttr_days=round(sum((dt.date.fromisoformat(t['closed_at']) - dt.date.fromisoformat(S['findings'][t['finding_id']]['first_seen'])).days for t in cl) / len(cl), 1) if cl else 0,
                 average_risk_score=round(sum(f['risk_score'] for f in F) / max(len(F), 1), 1), assets=len(S['assets']), sources=len(S['src_counts']),

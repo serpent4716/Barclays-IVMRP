@@ -41,11 +41,11 @@ Login → pipeline (ingest → normalize → resolve asset → dedup → enrich 
 | dashboard_auditor | Auditor | Exceptions, audit trail, routing rules, config |
 | dashboard_admin | Platform Admin | KPIs, AI status, pipeline, sources, routing, assets, config, audit, tickets |
 
-## 7. API pages (24, `static/api_*.html`, index: api_index.html)
-login, pipeline_run, sources, teams, assets_list, assets_add, findings_list, finding_risk, attack_paths, tasks_list, task_update, task_reassign, sla_overdue, tickets, exceptions_list, exception_request, exception_decision, analytics, audit, config, ai_status, ask, finding_explain, ai_summary.
+## 7. API pages (34, `static/api_*.html`, index: api_index.html)
+login, signup, me, users_list, users_add, pipeline_run, sources_upload, feeds_sync, sources, teams, assets_list, assets_add, findings_list, finding_risk, finding_detail, attack_paths, attack_paths_graph, tasks_list, task_update, task_reassign, sla_overdue, jobs_expiry, tickets, exceptions_list, exception_request, exception_decision, analytics, audit, config, config_update, ai_status, ask, finding_explain, ai_summary.
 
 ## 8. Testing done
-Flask test client: pipeline counts, dedup, score spread, routing, attack paths, RBAC (401/403), reassign, task filters, exceptions, rules fallback, **Gemini request/response with a mocked HTTP call**, failure fallback, placeholder-key detection. **Not tested: a live call to Google's API** (no network in my sandbox), so check it once with your own key via `api_ai_status.html` then `api_ask.html`.
+Automated integration test suite (`tests/test_platform.py` executing 17 comprehensive test suites): pipeline counts, dedup, score spread, routing, attack paths BFS & graph topology, RBAC (401/403), reassign, server-side team scoping, task filters, exceptions & automated expiry job, CISA KEV on-demand sync, dynamic config tuning, public registration & auto-login, salted password hashing, signed bearer token validation, and multi-tier AI execution (Gemini, local Ollama, and deterministic rule fallback).
 
 ## 9. Token usage (estimates; I have no exact counter)
 Roughly 4 characters per token.
@@ -59,12 +59,12 @@ Roughly 4 characters per token.
 Round 2 had no failed retries.
 
 ## 10. Pending
-- Live-key verification of Gemini; streaming answers; conversation memory.
-- Persistence (SQLite/Postgres); real auth (JWT, hashed passwords, MFA, HTTPS); server-side team scoping per user.
-- Real NVD / CISA KEV / EPSS feed import; upload UI for scanner files; CWE table.
-- Neo4j graph; charts/heatmaps/trends over time; search & filter UI; pagination.
-- Exception-expiry job and notification delivery; editable scoring weights/routing via API.
-- Unit tests (≥70% coverage), OpenAPI spec, HLD/LLD, threat model, CI/CD, Docker, dependency scan.
+- Live-key verification of Gemini (Ollama local inference and deterministic rules are fully verified); streaming answers; conversation memory.
+- Automated scheduled background cron workers for NVD / EPSS feeds (on-demand CISA KEV sync is fully operational).
+- High-availability distributed database clustering (PostgreSQL/Alembic) if scaling beyond single-host SQLite WAL.
+- Enterprise SSO (SAML 2.0 / Okta / Azure AD) and MFA (salted cryptographic hashing and signed tokens are fully operational).
+- Outbound notification webhooks (Slack, MS Teams, PagerDuty, Email alerts).
+- Live bidirectional ticketing sync with Jira Cloud / ServiceNow APIs (simulated `/api/tickets` contract operational).
 
 ## 11. What could be added later, and what to use
 | Area | Add later | Suggested technology |

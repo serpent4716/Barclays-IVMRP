@@ -1,12 +1,12 @@
 """Generates all HTML pages: login, one dashboard per role, one page per API call."""
 import json
 H=lambda t,b,a='':f'<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>{t}</title><link rel="icon" type="image/svg+xml" href="favicon.svg"><link rel=stylesheet href=style.css><script>document.documentElement.setAttribute("data-theme",localStorage.theme||"light");</script><script src="https://cdn.jsdelivr.net/npm/chart.js"></script></head><body {a}><header id=top></header><main>{b}</main><script src=app.js></script></body></html>'
-DASH={'executive':('Executive / CISO','kpis,urgency,bu,top,paths,aistatus,ask'),
-'analyst':('Security Analyst','kpis,urgency,pipe,allf,sources,paths,aistatus,ask,exc'),
-'manager':('Vulnerability Manager / BU Manager','kpis,teams,overdue,tasks,exc,tickets'),
+DASH={'executive':('Executive / CISO','kpis,urgency,risk_trend,bu,top,top_assets,paths,expiring_exceptions,ask'),
+'analyst':('Security Analyst','kpis,urgency,risk_trend,pipe,allf,top_assets,sources,paths,expiring_exceptions,ask,exc'),
+'manager':('Vulnerability Manager / BU Manager','kpis,teams,overdue,tasks,top_assets,expiring_exceptions,exc,tickets'),
 'owner':('Fix Team / Asset Owner','tasks,exc,ask'),
-'auditor':('Auditor','exc,audit,routing,config'),
-'admin':('Platform Administrator','kpis,aistatus,pipe,sources,routing,assets,config,audit,tickets')}
+'auditor':('Auditor','expiring_exceptions,exc,audit,routing,config'),
+'admin':('Platform Administrator','kpis,risk_trend,pipe,sources,routing,assets,top_assets,expiring_exceptions,config,ask,audit,tickets')}
 APIS=[('login','POST','/api/login','Any','{"username":"analyst","password":"analyst123"}','Authenticate, returns cryptographically signed token'),
 ('signup','POST','/api/signup','Any','{"username":"newanalyst","password":"secretpassword123","full_name":"New Security Analyst","role":"analyst"}','Public user sign up, creates account and returns signed token'),
 ('me','GET','/api/me','any logged-in','','Current authenticated user profile and team scoping'),

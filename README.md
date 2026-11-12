@@ -204,7 +204,7 @@ Barclays-IVMRP/
 ├── requirements.txt         # Project dependencies (Flask 3.x, Gunicorn 21+)
 ├── .env.example             # Template for environment configuration
 ├── tests/
-│   └── test_platform.py     # 16 automated unittest test suites
+│   └── test_platform.py     # 17 automated unittest test suites
 ├── data/
 │   ├── assets.json          # Synthetic asset inventory (12 assets with metadata)
 │   ├── intel.json           # Real CVE definitions, CVSS, CISA KEV flags, EPSS scores, topologies
@@ -212,11 +212,12 @@ Barclays-IVMRP/
 │   ├── teams.json           # Routing rules, team descriptions, SLA configurations
 │   └── ivmrp.db             # Persistent SQLite database (created automatically; git-ignored)
 ├── static/
-│   ├── index.html           # Role selection and landing portal
+│   ├── index.html           # Authentication portal (sign in / registration)
 │   ├── app.js               # Frontend single-page application router & modal system
 │   ├── style.css            # Responsive layout styling and badge indicators
+│   ├── favicon.svg          # Vector brand favicon
 │   ├── dashboard_*.html     # 6 role-based dashboard views
-│   └── api_*.html           # 32 interactive API testing pages
+│   └── api_*.html           # 34 interactive API testing pages (index: api_index.html)
 ├── PROJECT_REPORT.md        # Prototype development report, benchmarks, and roadmap
 └── SYSTEM_GUIDE.md          # In-depth system architecture guide and delivery logs
 ```
