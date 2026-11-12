@@ -32,7 +32,8 @@ class TestIVMRPPlatform(unittest.TestCase):
         # 1. Login success
         res = self.client.post('/api/login', json={'username': 'analyst', 'password': 'analyst123'})
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.json.get('token'), 'tok-analyst')
+        self.assertEqual(res.json.get('role'), 'analyst')
+        self.assertTrue(len(res.json.get('token')) > 20)
 
         # 2. Login failure
         res = self.client.post('/api/login', json={'username': 'analyst', 'password': 'wrongpassword'})
@@ -206,6 +207,185 @@ class TestIVMRPPlatform(unittest.TestCase):
         self.assertEqual(self.client.get('/api/audit', headers=auth).status_code, 200)
         self.assertEqual(self.client.get('/api/config', headers=auth).status_code, 200)
         self.assertEqual(self.client.get('/api/findings/FND-000001/detail', headers=auth).status_code, 200)
+
+    def test_10_password_hashing_and_auth_tokens(self):
+        """Test cryptographic signed tokens and salted password verification."""
+        # Valid login with hashed password check
+        res = self.client.post('/api/login', json={'username': 'admin', 'password': 'admin123'})
+        self.assertEqual(res.status_code, 200)
+        token = res.json.get('token')
+        self.assertIsNotNone(token)
+        self.assertTrue(len(token) > 20)  # Signed token string
+
+        # Invalid password
+        res_bad = self.client.post('/api/login', json={'username': 'admin', 'password': 'wrongpassword'})
+        self.assertEqual(res_bad.status_code, 401)
+
+        # Access with signed token
+        res_me = self.client.get('/api/me', headers={'Authorization': f'Bearer {token}'})
+        self.assertEqual(res_me.status_code, 200)
+        self.assertEqual(res_me.json['username'], 'admin')
+        self.assertEqual(res_me.json['role'], 'admin')
+
+    def test_11_user_profile_and_management(self):
+        """Test user listing and registering new users."""
+        admin_auth = self._auth_header('admin')
+
+        # List users
+        res = self.client.get('/api/users', headers=admin_auth)
+        self.assertEqual(res.status_code, 200)
+        self.assertGreaterEqual(len(res.json), 6)
+
+        # Create new user
+        new_u = {
+            'username': 'sec_eng_1',
+            'password': 'secpassword123',
+            'role': 'owner',
+            'team': 'platform-team',
+            'full_name': 'Security Engineer 1'
+        }
+        res_add = self.client.post('/api/users', json=new_u, headers=admin_auth)
+        self.assertEqual(res_add.status_code, 201)
+        self.assertEqual(res_add.json['username'], 'sec_eng_1')
+        self.assertEqual(res_add.json['team'], 'platform-team')
+        self.assertNotIn('password_hash', res_add.json)
+
+        # Login with newly created user
+        res_login = self.client.post('/api/login', json={'username': 'sec_eng_1', 'password': 'secpassword123'})
+        self.assertEqual(res_login.status_code, 200)
+
+    def test_12_server_side_team_scoping(self):
+        """Test that owner role is automatically scoped to their team's tasks."""
+        # Login as owner (team is backend-dev-team)
+        res_login = self.client.post('/api/login', json={'username': 'owner', 'password': 'owner123'})
+        owner_token = res_login.json['token']
+        owner_auth = {'Authorization': f'Bearer {owner_token}'}
+
+        # Tasks without explicit team parameter defaults to user's team
+        res_tasks = self.client.get('/api/tasks', headers=owner_auth)
+        self.assertEqual(res_tasks.status_code, 200)
+        for t in res_tasks.json:
+            self.assertEqual(t['fix_team'], 'backend-dev-team')
+
+        # Admin sees all tasks
+        res_admin = self.client.get('/api/tasks', headers=self._auth_header('admin'))
+        self.assertGreater(len(res_admin.json), len(res_tasks.json))
+
+    def test_13_cisa_kev_sync(self):
+        """Test on-demand CISA KEV threat catalog synchronization and score updates."""
+        res = self.client.post('/api/feeds/sync', json={'cves': ['CVE-2021-44228', 'CVE-2022-22965']}, headers=self._auth_header('analyst'))
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json['status'], 'ok')
+        self.assertGreaterEqual(res.json['cves_processed'], 2)
+
+    def test_14_dynamic_config_weights_and_sla_update(self):
+        """Test dynamic governance config updates for weights and SLA turnaround days."""
+        admin_auth = self._auth_header('admin')
+        analyst_auth = self._auth_header('analyst')
+
+        # Non-admin forbidden
+        res_forbid = self.client.put('/api/config', json={'weights': {'cvss': 0.35}}, headers=analyst_auth)
+        self.assertEqual(res_forbid.status_code, 403)
+
+        # Admin update
+        new_cfg = {
+            'weights': {'cvss': 0.35, 'epss': 0.25},
+            'sla_days': {'EMERGENCY': 1, 'HIGH': 5}
+        }
+        res_ok = self.client.put('/api/config', json=new_cfg, headers=admin_auth)
+        self.assertEqual(res_ok.status_code, 200)
+        self.assertEqual(res_ok.json['weights']['cvss'], 0.35)
+        self.assertEqual(res_ok.json['sla_days']['EMERGENCY'], 1)
+
+        # Verify persisted via GET
+        res_get = self.client.get('/api/config', headers=admin_auth)
+        self.assertEqual(res_get.status_code, 200)
+        self.assertEqual(res_get.json['weights']['cvss'], 0.35)
+        self.assertEqual(res_get.json['sla_days']['EMERGENCY'], 1)
+
+    def test_15_automated_exception_expiry_job(self):
+        """Test automated background scanning for expired risk exceptions and SLA escalations."""
+        admin_auth = self._auth_header('admin')
+        manager_auth = self._auth_header('manager')
+
+        # Create and approve an exception
+        req = self.client.post('/api/exceptions', json={'finding_id': 'FND-000003', 'reason': 'Audit window test', 'days': 30}, headers=admin_auth)
+        self.assertIn(req.status_code, [200, 201])
+        eid = req.json['exception_id']
+        dec = self.client.post(f'/api/exceptions/{eid}/decision', json={'decision': 'APPROVED'}, headers=manager_auth)
+        self.assertEqual(dec.status_code, 200)
+
+        # Manually backdate expiry to simulate time passing
+        conn = db.get_connection(self.test_db_path)
+        cur = conn.cursor()
+        cur.execute("UPDATE exceptions SET expires_at = '2020-01-01' WHERE exception_id = ?", (eid,))
+        conn.commit()
+        conn.close()
+
+        # Run automated SLA & expiry scan job
+        job_res = self.client.post('/api/jobs/check-sla-and-expiry', headers=manager_auth)
+        self.assertEqual(job_res.status_code, 200)
+        self.assertGreaterEqual(job_res.json['expired_count'], 1)
+        expired_ids = [e['exception_id'] for e in job_res.json['expired_exceptions']]
+        self.assertIn(eid, expired_ids)
+
+        # Verify finding status returned to ASSIGNED
+        fnd_res = self.client.get('/api/findings/FND-000003/risk', headers=admin_auth)
+        self.assertEqual(fnd_res.status_code, 200)
+        self.assertEqual(fnd_res.json['status'], 'ASSIGNED')
+
+    def test_16_attack_paths_graph_topology(self):
+        """Test graph topology API returns structured nodes, edges, and attack traversal paths."""
+        res = self.client.get('/api/attack-paths/graph', headers=self._auth_header('analyst'))
+        self.assertEqual(res.status_code, 200)
+        data = res.json
+        self.assertIn('nodes', data)
+        self.assertIn('edges', data)
+        self.assertIn('paths', data)
+
+        # Node properties check (by name and id)
+        node_names = {n['name']: n for n in data['nodes']}
+        self.assertIn('core-db-prod', node_names)
+        self.assertTrue(node_names['core-db-prod']['crown_jewel'])
+        self.assertIn('payment-api-prod', node_names)
+        self.assertTrue(node_names['payment-api-prod']['crown_jewel'])
+
+        # Perimeter ingress check
+        perimeter_nodes = [n for n in data['nodes'] if n['internet_exposed']]
+        self.assertGreater(len(perimeter_nodes), 0)
+
+        # Traversable paths check
+        self.assertGreater(len(data['paths']), 0)
+        self.assertTrue(any(p['target'] == 'core-db-prod' for p in data['paths']))
+
+    def test_17_user_signup_and_auto_login(self):
+        """Test public user registration endpoint with automatic token generation."""
+        # Invalid short username
+        res_bad = self.client.post('/api/signup', json={'username': 'ab', 'password': 'password123'})
+        self.assertEqual(res_bad.status_code, 400)
+
+        # Successful signup
+        new_user = {
+            'username': 'new_analyst_qa',
+            'password': 'testpassword123',
+            'full_name': 'QA Analyst',
+            'role': 'analyst',
+            'email': 'qa.analyst@barclays.com'
+        }
+        res_ok = self.client.post('/api/signup', json=new_user)
+        self.assertEqual(res_ok.status_code, 201)
+        self.assertEqual(res_ok.json['username'], 'new_analyst_qa')
+        self.assertIn('token', res_ok.json)
+        new_token = res_ok.json['token']
+
+        # Use new token to access protected endpoint
+        res_me = self.client.get('/api/me', headers={'Authorization': f'Bearer {new_token}'})
+        self.assertEqual(res_me.status_code, 200)
+        self.assertEqual(res_me.json['username'], 'new_analyst_qa')
+
+        # Conflict on duplicate username
+        res_dup = self.client.post('/api/signup', json=new_user)
+        self.assertEqual(res_dup.status_code, 409)
 
 if __name__ == '__main__':
     unittest.main()

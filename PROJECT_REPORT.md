@@ -85,4 +85,4 @@ Round 2 had no failed retries.
 Suggested order: (1) database, (2) real auth, (3) real feeds, (4) tests, (5) charts UI, (6) notifications, (7) graph DB and ML.
 
 ## 12. UI notes (round 4)
-Roles live in the top-right ☰ menu; dashboards have welcome banner, glossary and a clickable risk detail panel (`/api/findings/<id>/detail`). Not yet done: visual testing in real browsers on several screen sizes, saved filters, charts beyond the urgency bar, dark mode.
+Roles live in the top-right navigation menu; dashboards have welcome banner, glossary and a clickable risk detail panel (`/api/findings/<id>/detail`). Not yet done: visual testing in real browsers on several screen sizes, saved filters, charts beyond the urgency bar, dark mode.

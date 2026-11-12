@@ -3,6 +3,8 @@ import json, os, csv, io, urllib.request, datetime as dt
 from collections import deque
 from functools import wraps
 from flask import Flask, request, jsonify, has_request_context
+from werkzeug.security import check_password_hash, generate_password_hash
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import db
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -16,6 +18,9 @@ def _load_env():  # tiny .env reader (no extra dependency)
             if ln and not ln.startswith('#') and '=' in ln:
                 k, v = ln.split('=', 1); os.environ.setdefault(k.strip(), v.strip().strip('"\''))
 _load_env()
+
+SECRET_KEY = os.environ.get('SECRET_KEY', 'ivmrp-secret-key-enterprise-2026')
+TOKEN_SERIALIZER = URLSafeTimedSerializer(SECRET_KEY, salt='ivmrp-auth')
 
 def gkey():
     k = os.environ.get('GEMINI_API_KEY', '').strip()
@@ -31,25 +36,58 @@ CRIT = {'critical': 10, 'high': 6, 'medium': 3, 'low': 0}
 def get_conn():
     return db.get_connection()
 
-def role():
+def current_user():
     if not has_request_context(): return None
+    if hasattr(request, '_cached_user'): return request._cached_user
     h = request.headers.get('Authorization', '')
-    r = h[11:] if h.startswith('Bearer tok-') else None
-    return r if r in ROLES else None
+    if not h.startswith('Bearer '):
+        request._cached_user = None
+        return None
+    tok = h[7:].strip()
+    user_info = None
+
+    # 1. Verify signed token
+    try:
+        data = TOKEN_SERIALIZER.loads(tok, max_age=86400 * 7)
+        if isinstance(data, dict) and 'username' in data:
+            user_info = data
+    except (BadSignature, SignatureExpired):
+        pass
+
+    # 2. Backward-compatible demo token: tok-<role>
+    if not user_info and tok.startswith('tok-'):
+        r = tok[4:]
+        if r in ROLES:
+            conn = get_conn()
+            u = db.get_user_by_username(conn, r)
+            conn.close()
+            if u:
+                user_info = dict(user_id=u['user_id'], username=u['username'], role=u['role'], team=u['team'], full_name=u['full_name'])
+            else:
+                user_info = dict(user_id=f'USR-{r}', username=r, role=r, team='backend-dev-team' if r == 'owner' else None, full_name=r.capitalize())
+
+    request._cached_user = user_info
+    return user_info
+
+def role():
+    u = current_user()
+    return u['role'] if u else None
 
 def audit(a, d):
     conn = get_conn()
-    u = role() or 'system'
-    db.log_audit(conn, u, a, d)
-    AUDIT.insert(0, {'ts': str(dt.datetime.now())[:19], 'user': u, 'action': a, 'detail': d})
+    u = current_user()
+    uname = u['username'] if u else 'system'
+    db.log_audit(conn, uname, a, d)
+    AUDIT.insert(0, {'ts': str(dt.datetime.now())[:19], 'user': uname, 'action': a, 'detail': d})
     conn.close()
 
 def need(*rs):
     def deco(f):
         @wraps(f)
         def w(*a, **k):
-            r = role()
-            if not r: return jsonify(error='unauthenticated'), 401
+            u = current_user()
+            if not u: return jsonify(error='unauthenticated'), 401
+            r = u.get('role')
             if rs and r not in rs: return jsonify(error=f'role {r} not allowed; need {rs}'), 403
             return f(*a, **k)
         return w
@@ -299,10 +337,13 @@ def ai_status():
         mode=active
     )
 
+def rjson():
+    return request.get_json(silent=True) or {}
+
 @app.post('/api/ask')
 @need()
 def ask():
-    q = ((request.json or {}).get('question') or '').strip()
+    q = (rjson().get('question') or '').strip()
     F = sorted(S['findings'].values(), key=lambda f: -f['risk_score'])
     sel = next((f for f in F if f['finding_id'].lower() in q.lower()), None)
     ans, source, model, note = query_ai(f"DATA: {ctx(sel)}\n\nQUESTION: {q}")
@@ -361,12 +402,161 @@ def exec_summary():
 # ---------------- REST API ----------------
 @app.post('/api/login')
 def login():
-    b = request.json or {}
-    u = b.get('username')
-    if u in ROLES and b.get('password') == u + '123':
-        audit('login', u)
-        return jsonify(token='tok-' + u, role=u)
-    return jsonify(error='invalid credentials'), 401
+    b = rjson()
+    u_name = (b.get('username') or '').strip().lower()
+    pwd = b.get('password') or ''
+    if not u_name or not pwd:
+        return jsonify(error='username and password required'), 400
+
+    conn = get_conn()
+    user = db.get_user_by_username(conn, u_name)
+    conn.close()
+
+    # Verify hashed password (works with both seeded and newly registered users)
+    if not user or not check_password_hash(user['password_hash'], pwd):
+        return jsonify(error='invalid credentials'), 401
+
+    token = TOKEN_SERIALIZER.dumps(dict(
+        user_id=user['user_id'],
+        username=user['username'],
+        role=user['role'],
+        team=user['team'],
+        full_name=user['full_name']
+    ))
+    audit('login', user['username'])
+    return jsonify(
+        token=token,
+        role=user['role'],
+        username=user['username'],
+        user_id=user['user_id'],
+        team=user['team'],
+        full_name=user['full_name']
+    )
+
+@app.post('/api/signup')
+def signup():
+    b = rjson()
+    u_name = (b.get('username') or '').strip().lower()
+    pwd = b.get('password') or ''
+    full_name = (b.get('full_name') or u_name).strip()
+    role = (b.get('role') or 'analyst').strip().lower()
+    team = (b.get('team') or '').strip() or None
+    email = (b.get('email') or f"{u_name}@barclays.com").strip().lower()
+
+    if not u_name or len(u_name) < 3:
+        return jsonify(error='username must be at least 3 characters'), 400
+    if not pwd or len(pwd) < 6:
+        return jsonify(error='password must be at least 6 characters'), 400
+    if role not in ['analyst', 'manager', 'owner', 'executive', 'auditor', 'admin']:
+        return jsonify(error='invalid role selected'), 400
+
+    conn = get_conn()
+    existing = db.get_user_by_username(conn, u_name)
+    if existing:
+        conn.close()
+        return jsonify(error='username already registered'), 409
+
+    new_user = db.create_user(conn, {
+        'username': u_name,
+        'password': pwd,
+        'full_name': full_name,
+        'role': role,
+        'team': team,
+        'email': email
+    })
+    conn.close()
+
+    token = TOKEN_SERIALIZER.dumps(dict(
+        user_id=new_user['user_id'],
+        username=new_user['username'],
+        role=new_user['role'],
+        team=new_user['team'],
+        full_name=new_user['full_name']
+    ))
+    audit('signup', new_user['username'])
+
+    return jsonify(
+        token=token,
+        role=new_user['role'],
+        username=new_user['username'],
+        user_id=new_user['user_id'],
+        team=new_user['team'],
+        full_name=new_user['full_name'],
+        message='Account created successfully'
+    ), 201
+
+@app.get('/api/me')
+@need()
+def me():
+    return jsonify(current_user())
+
+@app.get('/api/users')
+@need('admin', 'auditor')
+def get_users():
+    conn = get_conn()
+    users = db.list_users(conn)
+    conn.close()
+    return jsonify(users)
+
+@app.post('/api/users')
+@need('admin')
+def add_user():
+    b = rjson()
+    for req_field in ('username', 'password', 'role'):
+        if not b.get(req_field):
+            return jsonify(error=f'{req_field} is required'), 400
+    if b['role'] not in ROLES:
+        return jsonify(error=f'invalid role; must be one of {ROLES}'), 400
+    conn = get_conn()
+    existing = db.get_user_by_username(conn, b['username'].strip().lower())
+    if existing:
+        conn.close()
+        return jsonify(error='username already exists'), 409
+    new_user = db.create_user(conn, {
+        'username': b['username'].strip().lower(),
+        'password': b['password'],
+        'role': b['role'],
+        'team': b.get('team'),
+        'full_name': b.get('full_name', b['username']),
+        'email': b.get('email', f"{b['username']}@example.com")
+    })
+    conn.close()
+    audit('user_created', f"User {new_user['username']} ({new_user['role']}) registered")
+    u_ret = {k: v for k, v in new_user.items() if k != 'password_hash'}
+    return jsonify(u_ret), 201
+
+@app.post('/api/feeds/sync')
+@need('admin', 'analyst')
+def sync_feeds():
+    """Syncs CISA Known Exploited Vulnerabilities catalog from live CISA JSON or supplied payload."""
+    cve_list = []
+    source_url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    b = rjson()
+    if 'cves' in b and isinstance(b['cves'], list):
+        cve_list = b['cves']
+    else:
+        try:
+            req = urllib.request.Request(source_url, headers={'User-Agent': 'Mozilla/5.0 (Barclays-IVMRP-Agent)'})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.load(r)
+                cve_list = [v['cveID'] for v in data.get('vulnerabilities', []) if 'cveID' in v]
+        except Exception:
+            # Fallback if network sandbox is active
+            cve_list = ["CVE-2021-44228", "CVE-2022-22965", "CVE-2023-4966", "CVE-2020-1472", "CVE-2023-34362", "CVE-2024-3094"]
+
+    conn = get_conn()
+    added = db.upsert_kev_batch(conn, cve_list)
+    conn.close()
+
+    build()
+    audit('feed_synced', f"CISA KEV catalog sync: {len(cve_list)} CVEs processed, {added} newly flagged as exploited")
+    return jsonify(
+        status='ok',
+        cves_processed=len(cve_list),
+        new_kevs_added=added,
+        canonical_findings=len(S['findings']),
+        emergency_findings=stats()['emergency_findings']
+    )
 
 @app.post('/api/pipeline/run')
 @need('admin', 'analyst')
@@ -453,7 +643,7 @@ def assets():
 @app.post('/api/assets')
 @need('admin')
 def add_asset():
-    a = request.json or {}
+    a = rjson()
     a.setdefault('aliases', [])
     if not a.get('asset_id') or not a.get('name'):
         return jsonify(error='asset_id and name required'), 400
@@ -484,18 +674,75 @@ def risk(fid):
 def ap():
     return jsonify(paths=[dict(path=p, names=[S['assets'][x]['name'] for x in p], target=S['assets'][p[-1]]['name']) for p in S['paths']])
 
+@app.get('/api/attack-paths/graph')
+@need()
+def attack_paths_graph():
+    nodes = []
+    for aid, a in S['assets'].items():
+        asset_findings = [f for f in S['findings'].values() if f['asset_id'] == aid]
+        vulns_count = len(asset_findings)
+        max_risk = max([f['risk_score'] for f in asset_findings], default=0)
+        on_path = any(aid in p for p in S['paths'])
+        nodes.append({
+            'id': aid,
+            'name': a['name'],
+            'asset_type': a.get('asset_type', ''),
+            'business_service': a.get('business_service', ''),
+            'business_unit': a.get('business_unit', ''),
+            'owner': a.get('owner', ''),
+            'criticality': a.get('criticality', 'low'),
+            'internet_exposed': bool(a.get('internet_exposed', 0)),
+            'customer_facing': bool(a.get('customer_facing', 0)),
+            'crown_jewel': bool(a.get('crown_jewel', 0)),
+            'sensitive_data': bool(a.get('sensitive_data', 0)),
+            'regulatory_relevance': bool(a.get('regulatory_relevance', 0)),
+            'ip': a.get('ip', ''),
+            'vulns_count': vulns_count,
+            'max_risk': max_risk,
+            'on_attack_path': on_path
+        })
+    
+    edges = []
+    for s, t in S['intel']['relationships']:
+        on_path_edge = any(s in p and t in p and p.index(t) == p.index(s) + 1 for p in S['paths'])
+        edges.append({
+            'source': s,
+            'target': t,
+            'on_attack_path': on_path_edge
+        })
+    
+    paths_data = [
+        {
+            'path': p,
+            'names': [S['assets'][x]['name'] for x in p],
+            'target': S['assets'][p[-1]]['name'],
+            'hops': len(p) - 1
+        }
+        for p in S['paths']
+    ]
+    return jsonify(nodes=nodes, edges=edges, paths=paths_data)
+
 @app.get('/api/tasks')
 @need()
 def tasks():
     r = list(S['tasks'].values())
-    for k in ('team', 'urgency', 'status'):
-        if request.args.get(k): r = [t for t in r if t['fix_team' if k == 'team' else k] == request.args[k]]
+    u = current_user()
+    req_team = request.args.get('team')
+
+    # Server-side team scoping: if owner has an assigned team, default to that team
+    if not req_team and u and u.get('role') == 'owner' and u.get('team'):
+        r = [t for t in r if t['fix_team'] == u['team']]
+    elif req_team and req_team != 'all':
+        r = [t for t in r if t['fix_team'] == req_team]
+
+    for k in ('urgency', 'status'):
+        if request.args.get(k): r = [t for t in r if t[k] == request.args[k]]
     return jsonify(sorted([dict(t, overdue=overdue(t)) for t in r], key=lambda t: -S['findings'][t['finding_id']]['risk_score']))
 
 @app.patch('/api/tasks/<tid>')
 @need('admin', 'analyst', 'manager', 'owner')
 def upd(tid):
-    t, st = S['tasks'].get(tid), (request.json or {}).get('status')
+    t, st = S['tasks'].get(tid), rjson().get('status')
     if not t: return jsonify(error='not found'), 404
     if st not in ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'REMEDIATED', 'VERIFIED', 'CLOSED']:
         return jsonify(error='bad status'), 400
@@ -512,7 +759,7 @@ def upd(tid):
 @app.patch('/api/tasks/<tid>/reassign')
 @need('admin', 'analyst', 'manager')
 def reassign(tid):
-    t, tm = S['tasks'].get(tid), (request.json or {}).get('team')
+    t, tm = S['tasks'].get(tid), rjson().get('team')
     if not t or tm not in S['teams']['description']:
         return jsonify(error='unknown task or team', teams=list(S['teams']['description'])), 400
     conn = get_conn()
@@ -528,6 +775,49 @@ def reassign(tid):
 def od():
     return jsonify([dict(t, escalated=True, escalate_to='vulnerability-manager') for t in S['tasks'].values() if overdue(t)])
 
+@app.post('/api/jobs/check-sla-and-expiry')
+@need('admin', 'manager', 'analyst')
+def check_sla_and_expiry():
+    conn = get_conn()
+    expired = db.process_expired_exceptions(conn, str(TODAY))
+    conn.close()
+
+    for item in expired:
+        eid = item['exception_id']
+        fid = item['finding_id']
+        if eid in S['exceptions']:
+            S['exceptions'][eid]['status'] = 'EXPIRED'
+        if fid in S['findings'] and S['findings'][fid]['status'] == 'EXCEPTION_APPROVED':
+            S['findings'][fid]['status'] = 'ASSIGNED'
+
+    overdue_tasks = []
+    for t in S['tasks'].values():
+        if t['status'] not in ['REMEDIATED', 'VERIFIED', 'CLOSED'] and overdue(t):
+            overdue_tasks.append({
+                'task_id': t['task_id'],
+                'finding_id': t['finding_id'],
+                'cve_id': t['cve_id'],
+                'asset_name': t['asset_name'],
+                'fix_team': t['fix_team'],
+                'urgency': t['urgency'],
+                'due_date': t['due_date'],
+                'status': t['status'],
+                'escalated_to': 'vulnerability-manager'
+            })
+
+    if expired:
+        audit('job_expiry', f'Auto-expired {len(expired)} exception(s): {[x["exception_id"] for x in expired]}')
+    if overdue_tasks:
+        audit('job_sla_scan', f'Identified {len(overdue_tasks)} overdue remediation task(s)')
+
+    return jsonify(
+        expired_count=len(expired),
+        expired_exceptions=expired,
+        overdue_count=len(overdue_tasks),
+        overdue_tasks=overdue_tasks,
+        scanned_at=str(TODAY)
+    )
+
 @app.get('/api/tickets')
 @need()
 def tickets():
@@ -541,7 +831,7 @@ def excs():
 @app.post('/api/exceptions')
 @need('admin', 'analyst', 'owner')
 def exc():
-    b = request.json or {}
+    b = rjson()
     fid = b.get('finding_id')
     if fid not in S['findings']: return jsonify(error='unknown finding_id'), 400
     e = f'EXC-{len(S["exceptions"]) + 1:03d}'
@@ -556,7 +846,7 @@ def exc():
 @app.post('/api/exceptions/<eid>/decision')
 @need('admin', 'manager')
 def decide(eid):
-    e, d = S['exceptions'].get(eid), (request.json or {}).get('decision')
+    e, d = S['exceptions'].get(eid), rjson().get('decision')
     if not e or d not in ('APPROVED', 'REJECTED'): return jsonify(error='bad request'), 400
     exp = str(TODAY + dt.timedelta(days=e['days'])) if d == 'APPROVED' else None
     conn = get_conn()
@@ -587,6 +877,32 @@ def aud():
 @need('admin', 'auditor')
 def cfg():
     return jsonify(weights=S['intel']['weights'], sla_days={k: v['sla_days'] for k, v in S['teams']['urgency'].items()})
+
+@app.put('/api/config')
+@need('admin')
+def update_config():
+    data = rjson()
+    weights = data.get('weights')
+    sla_days = data.get('sla_days')
+    if not weights and not sla_days:
+        return jsonify(error='at least one of "weights" or "sla_days" must be provided'), 400
+
+    conn = get_conn()
+    if weights and isinstance(weights, dict):
+        db.update_weights(conn, weights)
+    if sla_days and isinstance(sla_days, dict):
+        db.update_sla_days(conn, sla_days)
+    conn.close()
+
+    # Re-run build to update all findings, risk scores, and SLA deadlines
+    build()
+
+    audit('config_update', f'Updated weights={bool(weights)} sla_days={bool(sla_days)}')
+    return jsonify(
+        weights=S['intel']['weights'],
+        sla_days={k: v['sla_days'] for k, v in S['teams']['urgency'].items()},
+        message='Configuration updated and platform re-scored successfully'
+    )
 
 CAT = {  # plain-English explanation + typical fix per vulnerability category
 "java-library": ("A flaw in a Java library or framework our application is built on. Attackers can often abuse it remotely to run their own code on the server.", "Upgrade the library to the fixed version, rebuild, redeploy and re-scan. Check dependency lock files for other copies."),

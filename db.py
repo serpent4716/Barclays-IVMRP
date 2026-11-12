@@ -176,6 +176,17 @@ def init_db(db_path=None, seed_if_empty=True):
         duplicates_merged INTEGER NOT NULL,
         errors_json TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+        user_id TEXT PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL,
+        team TEXT,
+        full_name TEXT,
+        email TEXT,
+        created_at TEXT NOT NULL
+    );
     """)
     conn.commit()
 
@@ -183,6 +194,9 @@ def init_db(db_path=None, seed_if_empty=True):
         cur.execute("SELECT COUNT(*) FROM assets")
         if cur.fetchone()[0] == 0:
             seed_from_json(conn)
+        cur.execute("SELECT COUNT(*) FROM users")
+        if cur.fetchone()[0] == 0:
+            seed_default_users(conn)
 
     conn.close()
 
@@ -545,3 +559,115 @@ def get_or_create_task_id(conn, finding_id):
     val = cur.fetchone()[0]
     m = val if val is not None else 0
     return f"TASK-{m + 1:04d}"
+
+
+def seed_default_users(conn):
+    from werkzeug.security import generate_password_hash
+    cur = conn.cursor()
+    now_str = str(dt.datetime.now())[:19]
+    default_users = [
+        ('USR-0001', 'admin', 'admin123', 'admin', None, 'Platform Administrator', 'admin@example.com'),
+        ('USR-0002', 'analyst', 'analyst123', 'analyst', None, 'Security Analyst', 'analyst@example.com'),
+        ('USR-0003', 'manager', 'manager123', 'manager', None, 'Vulnerability Manager', 'manager@example.com'),
+        ('USR-0004', 'owner', 'owner123', 'owner', 'backend-dev-team', 'Backend Team Lead', 'owner@example.com'),
+        ('USR-0005', 'executive', 'executive123', 'executive', None, 'Chief Information Security Officer', 'ciso@example.com'),
+        ('USR-0006', 'auditor', 'auditor123', 'auditor', None, 'External Compliance Auditor', 'auditor@example.com')
+    ]
+    for uid, u, p, r, tm, name, email in default_users:
+        phash = generate_password_hash(p)
+        cur.execute("""
+        INSERT OR REPLACE INTO users (user_id, username, password_hash, role, team, full_name, email, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (uid, u, phash, r, tm, name, email, now_str))
+    conn.commit()
+
+def get_user_by_username(conn, username):
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+def get_user_by_id(conn, user_id):
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+def list_users(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, username, role, team, full_name, email, created_at FROM users ORDER BY user_id ASC")
+    return [dict(r) for r in cur.fetchall()]
+
+def create_user(conn, u):
+    from werkzeug.security import generate_password_hash
+    cur = conn.cursor()
+    now_str = str(dt.datetime.now())[:19]
+    cur.execute("SELECT MAX(CAST(SUBSTR(user_id, 5) AS INTEGER)) FROM users")
+    val = cur.fetchone()[0]
+    m = val if val is not None else 0
+    uid = f"USR-{m + 1:04d}"
+    phash = generate_password_hash(u['password'])
+    cur.execute("""
+    INSERT INTO users (user_id, username, password_hash, role, team, full_name, email, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (uid, u['username'], phash, u['role'], u.get('team'), u.get('full_name', u['username']), u.get('email', f"{u['username']}@example.com"), now_str))
+    conn.commit()
+    return get_user_by_id(conn, uid)
+
+def upsert_kev_batch(conn, cve_ids):
+    cur = conn.cursor()
+    added = 0
+    for cve in cve_ids:
+        cur.execute("SELECT cve_id FROM intel_kev WHERE cve_id = ?", (cve,))
+        if not cur.fetchone():
+            cur.execute("INSERT OR IGNORE INTO intel_kev (cve_id) VALUES (?)", (cve,))
+            added += 1
+    conn.commit()
+    return added
+
+def update_weights(conn, weights_dict):
+    """Updates intel scoring weights in intel_weights table."""
+    cur = conn.cursor()
+    for name, weight in weights_dict.items():
+        cur.execute("INSERT OR REPLACE INTO intel_weights (name, weight) VALUES (?, ?)", (name, float(weight)))
+    conn.commit()
+    cur.execute("SELECT name, weight FROM intel_weights")
+    return {r['name']: r['weight'] for r in cur.fetchall()}
+
+def update_sla_days(conn, sla_dict):
+    """Updates SLA turnaround days in teams_urgency table."""
+    cur = conn.cursor()
+    for urgency, val in sla_dict.items():
+        days = val['sla_days'] if isinstance(val, dict) and 'sla_days' in val else int(val)
+        label = val.get('label') if isinstance(val, dict) else None
+        cur.execute("SELECT label FROM teams_urgency WHERE urgency = ?", (urgency,))
+        row = cur.fetchone()
+        if row:
+            lbl = label or row['label']
+            cur.execute("UPDATE teams_urgency SET sla_days = ?, label = ? WHERE urgency = ?", (days, lbl, urgency))
+        else:
+            lbl = label or f"SLA {days} days"
+            cur.execute("INSERT INTO teams_urgency (urgency, sla_days, label) VALUES (?, ?, ?)", (urgency, days, lbl))
+    conn.commit()
+    cur.execute("SELECT urgency, sla_days, label FROM teams_urgency")
+    return {r['urgency']: dict(sla_days=r['sla_days'], label=r['label']) for r in cur.fetchall()}
+
+def process_expired_exceptions(conn, today_str):
+    """Scans APPROVED exceptions where expires_at < today_str, marks them EXPIRED, and resets finding status."""
+    cur = conn.cursor()
+    cur.execute("""
+    SELECT exception_id, finding_id, reason, requested_by, status, days, expires_at, decided_by, created_at
+    FROM exceptions
+    WHERE status = 'APPROVED' AND expires_at IS NOT NULL AND expires_at < ?
+    """, (today_str,))
+    rows = cur.fetchall()
+    expired = []
+    for r in rows:
+        exp_id = r['exception_id']
+        fid = r['finding_id']
+        cur.execute("UPDATE exceptions SET status = 'EXPIRED' WHERE exception_id = ?", (exp_id,))
+        cur.execute("UPDATE findings SET status = 'ASSIGNED' WHERE finding_id = ? AND status = 'EXCEPTION_APPROVED'", (fid,))
+        expired.append(dict(r))
+    conn.commit()
+    return expired
+

@@ -1,0 +1,19 @@
+services:
+  ivmrp-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: barclays-ivmrp:latest
+    container_name: barclays-ivmrp
+    network_mode: "host"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=5000
+      - SECRET_KEY=${SECRET_KEY:-ivmrp-enterprise-secret-key-2026}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-deepseek-coder:latest}
+      - DEMO_TODAY=${DEMO_TODAY:-2026-11-11}
+    restart: unless-stopped
